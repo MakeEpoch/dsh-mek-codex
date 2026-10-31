@@ -10,8 +10,11 @@ const result = await build({
   entryPoints: ['client/index.js'], bundle: true, write: false,
   platform: 'browser', format: 'cjs', target: 'chrome100', metafile: true,
   external: ['react', 'react-dom', 'react-dom/client'],
-  // Bundle the small JSX runtime; DSH only needs to supply its existing React.
-  alias: { 'react/jsx-runtime': new URL('node_modules/react/jsx-runtime.js', root).pathname },
+  // Delegate JSX to the React instance supplied by DSH, including React 18.
+  alias: {
+    'react/jsx-runtime': new URL('client/jsx-runtime.js', root).pathname,
+    'react/jsx-dev-runtime': new URL('client/jsx-runtime.js', root).pathname,
+  },
   define: { 'process.env.NODE_ENV': '"production"' },
   charset: 'utf8', legalComments: 'inline', logLevel: 'warning',
 });

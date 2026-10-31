@@ -96,10 +96,10 @@ if (!sidebar || sidebar.id !== 'codex-panel') {
 // S2 pure helpers: dedupe, grouping, duplicate-basename labels, source filter.
 const helpers = exports.__test ?? {};
 const sample = [
-  { id: 'a', title: 'A', cwd: '/x/proj', sourceKind: 'cli', updatedAt: 3 },
-  { id: 'a', title: 'A dup', cwd: '/x/proj', sourceKind: 'cli', updatedAt: 2 },
-  { id: 'b', title: 'B', cwd: '/y/proj', sourceKind: 'vscode', updatedAt: 5 },
-  { id: 'c', title: 'C', cwd: '/x/proj', sourceKind: 'vscode', updatedAt: 4 },
+  { id: 'a', title: 'A', projectId: 'project-a', cwd: '/x/proj', sourceKind: 'cli', updatedAt: 3 },
+  { id: 'a', title: 'A dup', projectId: 'project-a', cwd: '/x/proj', sourceKind: 'cli', updatedAt: 2 },
+  { id: 'b', title: 'B', projectId: 'project-b', cwd: '/y/proj', sourceKind: 'vscode', updatedAt: 5 },
+  { id: 'c', title: 'C', projectId: 'project-a', cwd: '/x/proj', sourceKind: 'vscode', updatedAt: 4 },
 ];
 if (typeof helpers.dedupeById !== 'function' || typeof helpers.buildSessionRows !== 'function') {
   console.error('[smoke] FAIL: __test helpers missing');
@@ -110,18 +110,18 @@ if (typeof helpers.dedupeById !== 'function' || typeof helpers.buildSessionRows 
     console.error('[smoke] FAIL: dedupeById returned', deduped.length, 'expected 3');
     failed = true;
   }
-  const rows = helpers.buildSessionRows(deduped, {});
+  const navigation = { projects: [{ id: 'project-a', name: 'Project A', roots: ['/x/proj'] }, { id: 'project-b', name: 'Project B', roots: ['/y/proj'] }], sections: [] };
+  const rows = helpers.buildSessionRows(deduped, { navigation });
   const groups = rows.filter((row) => row.kind === 'group');
-  if (groups.length !== 2 || groups[0].cwd !== '/y/proj') {
+  if (groups.length !== 2 || groups[0].projectId !== 'project-a') {
     console.error('[smoke] FAIL: group order wrong', JSON.stringify(groups));
     failed = true;
   }
-  // Both basenames are "proj", so labels must be full paths.
-  if (groups.some((group) => group.label !== group.cwd)) {
-    console.error('[smoke] FAIL: duplicate basename should show full path', JSON.stringify(groups));
+  if (groups.map(group => group.label).join(',') !== 'Project A,Project B') {
+    console.error('[smoke] FAIL: registered names must win over directory names', JSON.stringify(groups));
     failed = true;
   }
-  const filtered = helpers.buildSessionRows(deduped, { source: 'vscode' });
+  const filtered = helpers.buildSessionRows(deduped, { source: 'vscode', navigation });
   if (filtered.filter((row) => row.kind === 'thread').length !== 2) {
     console.error('[smoke] FAIL: source filter wrong', JSON.stringify(filtered));
     failed = true;

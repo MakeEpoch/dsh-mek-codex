@@ -175,3 +175,13 @@ test('event replay after release cannot restore obsolete ownership', async t => 
   assert.equal(result.presence.t1.owned, false);
   assert.equal(result.presence.t1.running, false);
 });
+
+test('new chat keeps an explicitly chosen native project and rejects unknown project IDs', async t => {
+  const {runtime,hub,store,approvals,dir}=setup(t);let params;
+  const nav={snapshot:async()=>({value:{projects:[{id:'project-a',nativeId:'project-a'}]}})};
+  const handlers=createHandlers(runtime,hub,store,approvals,dir,nav);
+  runtime.request=async(method,value)=>{assert.equal(method,'thread/start');params=value;return {thread:{id:'new',projectId:'project-a'}};};
+  await handlers.start({cwd:'/example/project',projectId:'project-a'});
+  assert.equal(params.projectId,'project-a');
+  await assert.rejects(handlers.start({cwd:'/example/project',projectId:'unknown'}),{code:'unknown-project'});
+});

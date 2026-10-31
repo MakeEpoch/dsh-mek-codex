@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useLayoutEffect, useCallback } from 'react';
 const h = React.createElement;
 import { TURN_STATUS } from '../constants.js';
 import { Markdown } from './markdown.js';
@@ -83,6 +83,29 @@ export function TurnBlock({ turn, live, plan }) {
     turn.status && turn.status !== 'completed' ? h('div', { className: 'cp-turn-foot', role: 'status' }, live && turn.status === 'inProgress' ? h('span', { className: 'cp-spinner' }) : null, TURN_STATUS[turn.status] ?? turn.status) : null);
 }
 
+function MeasuredTurn({ row, top, heightsRef, onHeightChange }) {
+  const element = useRef(null);
+  useLayoutEffect(() => {
+    const el = element.current;
+    if (!el) return;
+    const measure = () => {
+      const height = el.offsetHeight;
+      if (!height) return;
+      const previous = heightsRef.current.get(row.key);
+      if (previous === undefined || Math.abs(previous - height) > 1) {
+        heightsRef.current.set(row.key, height);
+        onHeightChange();
+      }
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [row.key, heightsRef, onHeightChange]);
+  return h('div', { className: 'cp-turn-slot', ref: element, style: { top } }, h(TurnBlock, { turn: row.turn, live: row.live, plan: row.plan }));
+}
+
 export function TurnList({ turns, liveTurn, livePlan, threadId, hasOlder, loadingOlder, onLoadOlder }) {
   const containerRef = useRef(null);
   const heightsRef = useRef(new Map());
@@ -93,6 +116,7 @@ export function TurnList({ turns, liveTurn, livePlan, threadId, hasOlder, loadin
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(600);
   const [away, setAway] = useState(false);
+  const onHeightChange = useCallback(() => setHeightsVersion(value => value + 1), []);
 
   useEffect(() => {
     stickBottomRef.current = true;
@@ -175,34 +199,7 @@ export function TurnList({ turns, liveTurn, livePlan, threadId, hasOlder, loadin
     h(
       'div',
       { className: 'cp-turn-inner', style: { height: total } },
-      layout.slice(start, end).map(({ row, top }) =>
-        h(
-          'div',
-          {
-            key: row.key,
-            className: 'cp-turn-slot',
-            style: { top },
-            ref: (el) => {
-              if (!el) return;
-              const measure = () => {
-                const height = el.offsetHeight;
-                if (!height) return;
-                const previous = heightsRef.current.get(row.key);
-                if (previous === undefined || Math.abs(previous - height) > 1) {
-                  heightsRef.current.set(row.key, height);
-                  setHeightsVersion((value) => value + 1);
-                }
-              };
-              measure();
-              if (typeof ResizeObserver === 'undefined') return;
-              const observer = new ResizeObserver(measure);
-              observer.observe(el);
-              return () => observer.disconnect();
-            },
-          },
-          h(TurnBlock, { turn: row.turn, live: row.live, plan: row.plan }),
-        ),
-      ),
+      layout.slice(start, end).map(({ row, top }) => h(MeasuredTurn, { key: row.key, row, top, heightsRef, onHeightChange })),
     ),
     away ? h('button', { className: 'cp-jump-bottom', 'aria-label': '回到最新消息', onClick: () => { const el = containerRef.current; if (el) { el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight); setScrollTop(el.scrollTop); } stickBottomRef.current = true; setAway(false); } }, h(Icon, { name: 'down', size: 16 }), '最新消息') : null,
   );

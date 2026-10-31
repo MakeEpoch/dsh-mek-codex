@@ -4,6 +4,7 @@ import { sourceLabel, formatTime, lowerBound, basename } from '../helpers.js';
 import { Icon } from './icon.js';
 
 const GROUP_HEIGHT = 36;
+const SECTION_HEIGHT = 28;
 const THREAD_HEIGHT = 32;
 
 export function ThreadRow({ thread, selected, presence, occupied, onSelect }) {
@@ -21,14 +22,19 @@ export function SessionRows({ rows, selectedId, presenceOf, occupiedOf, onSelect
   const visibleRows = useMemo(() => {
     const visible = []; let group; let count = 0;
     for (const row of rows) {
-      if (row.kind === 'group') { group = row; count = 0; visible.push(row); continue; }
-      if (folded[group?.cwd]) continue;
+      if (row.kind === 'section') { visible.push(row); group = null; continue; }
+      if (row.kind === 'group') {
+        group = row; count = 0; visible.push(row);
+        if (!(folded[row.cwd] ?? row.defaultCollapsed) && !row.count) visible.push({ kind: 'empty', cwd: row.cwd });
+        continue;
+      }
+      if (folded[group?.cwd] ?? group?.defaultCollapsed) continue;
       count++;
       if (count <= 5 || expanded[group?.cwd] || resetKey.split('|')[0]) visible.push(row);
       else if (count === 6) visible.push({ kind: 'more', cwd: group.cwd, count: group.count - 5 });
     }
     return visible;
-  }, [rows, folded, expanded, resetKey]);
+  }, [rows, folded, expanded, resetKey, hasMore]);
   const containerRef = useRef(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewport, setViewport] = useState(480);
@@ -53,7 +59,7 @@ export function SessionRows({ rows, selectedId, presenceOf, occupiedOf, onSelect
   const layout = useMemo(() => {
     let offset = 0;
     return visibleRows.map((row) => {
-      const height = row.kind === 'group' ? GROUP_HEIGHT : THREAD_HEIGHT;
+      const height = row.kind === 'section' ? SECTION_HEIGHT : row.kind === 'group' ? GROUP_HEIGHT : THREAD_HEIGHT;
       const entry = { row, top: offset, height };
       offset += height;
       return entry;
@@ -83,10 +89,12 @@ export function SessionRows({ rows, selectedId, presenceOf, occupiedOf, onSelect
       layout.slice(start, end).map(({ row, top, height }) =>
         h(
           'div',
-          { key: row.kind === 'group' ? `g:${row.cwd}` : row.kind === 'more' ? `m:${row.cwd}` : `t:${row.thread.id}`, className: 'cp-list-row', style: { top, height } },
-          row.kind === 'group'
-            ? h('button', { className: 'cp-group', title: row.cwd, 'aria-expanded': !folded[row.cwd], onClick: () => setFolded(previous => ({ ...previous, [row.cwd]: !previous[row.cwd] })) },
-                h(Icon, { name: 'folder', size: 16 }), h('span', { className: 'cp-group-name' }, row.label), h(Icon, { name: 'chevron', size: 12, className: folded[row.cwd] ? '' : 'cp-rotated' }))
+          { key: row.kind === 'thread' ? `t:${row.thread.id}` : `${row.kind}:${row.cwd}`, className: 'cp-list-row', style: { top, height } },
+          row.kind === 'section' ? h('div', { className: 'cp-nav-section' }, row.label)
+            : row.kind === 'empty' ? h('div', { className: 'cp-project-empty' }, hasMore ? '继续加载历史聊天以查看' : '暂无匹配的聊天')
+            : row.kind === 'group'
+            ? h('button', { className: 'cp-group', title: row.roots?.join('\n') || row.label, 'aria-expanded': !(folded[row.cwd] ?? row.defaultCollapsed), onClick: () => setFolded(previous => ({ ...previous, [row.cwd]: !(previous[row.cwd] ?? row.defaultCollapsed) })) },
+                h(Icon, { name: row.groupType === 'project' ? 'folder' : 'command', size: 16 }), h('span', { className: 'cp-group-name' }, row.label), h(Icon, { name: 'chevron', size: 12, className: (folded[row.cwd] ?? row.defaultCollapsed) ? '' : 'cp-rotated' }))
             : row.kind === 'more'
               ? h('button', { className: 'cp-show-more', onClick: () => setExpanded(previous => ({ ...previous, [row.cwd]: true })) }, `展开显示 · ${row.count}`)
             : h(ThreadRow, {
@@ -99,5 +107,6 @@ export function SessionRows({ rows, selectedId, presenceOf, occupiedOf, onSelect
         ),
       ),
     ),
+    hasMore ? h('button', { className: 'cp-load-more', onClick: onLoadMore, disabled: loadingMore }, loadingMore ? '正在加载…' : '加载更多历史聊天') : null,
   );
 }

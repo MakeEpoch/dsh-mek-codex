@@ -20,12 +20,13 @@ function dom(t) {
   t.after(async () => { await act(async () => root.unmount()); env.window.close(); });
   return root;
 }
-const meta = { id: 't1', title: 'Example conversation', cwd: '/example/project', turnCount: 1 };
+const navigation = { projects: [{ id: 'project-a', nativeId: 'project-a', name: 'Example project', roots: ['/example/project'], pinned: true }], sections: [] };
+const meta = { projectId: 'project-a', id: 't1', title: 'Example conversation', cwd: '/example/project', turnCount: 1 };
 const turns = [{ id: 'turn-1', status: 'completed', items: [{ id: 'a', type: 'agentMessage', text: 'Example response' }, { id: 'tool', type: 'commandExecution', command: 'git status', aggregatedOutput: 'clean' }] }];
 const client = {
   health: async () => ({ status: 'connected', detail: '已连接' }),
   models: async () => ({ data: [{ id: 'example', displayName: 'Example model', reasoningEfforts: ['low', 'high'] }] }),
-  list: async () => ({ data: [{ ...meta, sourceKind: 'cli', updatedAt: 100 }] }),
+  list: async () => ({ navigation, data: [{ ...meta, sourceKind: 'cli', updatedAt: 100 }] }),
   read: async () => meta,
   turns: async () => ({ turns }),
   events: (_payload, signal) => new Promise((resolve, reject) => { signal.addEventListener('abort', () => reject(Object.assign(new Error('abort'), { name: 'AbortError' })), { once: true }); }),
@@ -104,7 +105,7 @@ test('project groups fold and progressively reveal older chats', async t => {
   const { SessionRows } = await import('../client/components/sessions.js');
   const { buildSessionRows } = await import('../client/helpers.js');
   const root = dom(t);
-  const rows = buildSessionRows(Array.from({ length: 8 }, (_, i) => ({ id: `chat-${i}`, title: `Chat ${i}`, cwd: '/example/project', updatedAt: 10 - i })));
+  const rows = buildSessionRows(Array.from({ length: 8 }, (_, i) => ({ id: `chat-${i}`, title: `Chat ${i}`, projectId: 'project-a', cwd: '/example/project', updatedAt: 10 - i })), { navigation });
   await act(async () => root.render(h(SessionRows, { rows, resetKey: '|||0', presenceOf: () => null, occupiedOf: () => false, onSelect: () => {} })));
   assert.equal(document.querySelectorAll('.cp-thread').length, 5);
   await click('展开显示 · 3');
@@ -117,7 +118,7 @@ test('project groups fold and progressively reveal older chats', async t => {
 test('draft text survives switching chats', async t => {
   const root = dom(t);
   const own = { owned: true, resumeSafe: true };
-  const api = { ...client, list: async () => ({ data: ['t1', 't2'].map(id => ({ ...meta, id, title: id, presence: own })) }), read: async ({ threadId }) => ({ ...meta, id: threadId, presence: own }) };
+  const api = { ...client, list: async () => ({ navigation, data: ['t1', 't2'].map(id => ({ ...meta, id, title: id, presence: own })) }), read: async ({ threadId }) => ({ ...meta, id: threadId, presence: own }) };
   await act(async () => root.render(h(Panel, { client: api })));
   await act(async () => document.querySelectorAll('.cp-thread')[0].click());
   await change(document.querySelector('textarea'), 'unsent draft');
@@ -182,4 +183,46 @@ test('browsing history does not jump for new output and exposes return to latest
   await act(async () => root.render(h(TurnList, { ...props, liveTurn: { id: 'new', status: 'inProgress', items: [{ id: 'new-item', type: 'agentMessage', text: 'New output' }] } })));
   assert.equal(el.scrollTop, 150);
   await click('回到最新消息'); assert.equal(el.scrollTop, 1800);
+});
+
+test('built DSH module opens Markdown chats using the host React 18 renderer', async t => {
+  const root = dom(t);
+  assert.equal(React.version,'18.3.1');
+  const { readFile } = await import('node:fs/promises');
+  const { runInThisContext } = await import('node:vm');
+  let plugin, Main; const crashes = [];
+  window.__ModuleLoader__ = { load(config) { plugin = config.factory(id => { assert.equal(id,'react'); return React; }); } };
+  const bundle = await readFile(new URL('../lib/client.js',import.meta.url),'utf8');
+  assert.equal(bundle.includes('react.transitional.element'),false);
+  runInThisContext(bundle,{filename:'dsh-installed-client.js'});
+  const api = { ...client, turns: async () => ({turns:[{id:'t',status:'completed',items:[{id:'i',type:'agentMessage',text:'**Compatible**\n\n|A|B|\n|-|-|\n|1|2|\n\n```js\nconst value = 1;\n```'}]}]}) };
+  const cleanup = [];
+  plugin.apply({
+    connection:{rpc:{call:async (_path,_endpoint,{method,payload},signal)=>({result:{ok:true,value:await api[method](payload,signal)}})}},
+    slots:{inject:(_name,fn)=>fn(),register(options,component){if(options.name==='main')Main=component;return()=>{};}},
+    effect:fn=>cleanup.push(fn()),
+  });
+  t.after(()=>cleanup.forEach(dispose=>dispose?.()));
+  class Boundary extends React.Component {
+    state={error:null};
+    static getDerivedStateFromError(error){return {error};}
+    componentDidCatch(error){crashes.push(error);}
+    render(){return this.state.error?h('div',null,'crashed'):this.props.children;}
+  }
+  await act(async()=>root.render(h(Boundary,null,h(Main))));
+  await act(async()=>document.querySelector('.cp-thread').click());
+  assert.deepEqual(crashes,[]);
+  assert.equal(document.querySelector('.cp-markdown strong').textContent,'Compatible');
+  assert.ok(document.querySelector('.cp-markdown table'));
+  assert.match(document.querySelector('.cp-markdown code').textContent,/const value = 1/);
+});
+
+test('turn measurement disconnects ResizeObservers under React 18', async t => {
+  const root=dom(t); const {TurnList}=await import('../client/components/turns.js');let created=0,disconnected=0;
+  globalThis.ResizeObserver=class {constructor(){created++;}observe(){}disconnect(){disconnected++;}};
+  t.after(()=>{delete globalThis.ResizeObserver;});
+  await act(async()=>root.render(h(TurnList,{turns,threadId:'t1'})));
+  assert.ok(created>0);
+  await act(async()=>root.render(null));
+  assert.equal(disconnected,created);
 });

@@ -1,10 +1,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 const threads = [
-  { id: 'example-a', title: '审查工作区与发布准备', cwd: '/example/workspace', sourceKind: 'cli', updatedAt: Date.now() / 1000 },
-  { id: 'example-b', title: '检查插件兼容性', cwd: '/example/plugins', sourceKind: 'appServer', updatedAt: Date.now() / 1000 - 600 },
+  { projectId: 'preview-project', id: 'example-a', title: '审查工作区与发布准备', cwd: '/example/workspace', sourceKind: 'cli', updatedAt: Date.now() / 1000 },
+  { projectId: 'preview-other', id: 'example-b', title: '检查插件兼容性', cwd: '/example/plugins', sourceKind: 'appServer', updatedAt: Date.now() / 1000 - 600 },
 ];
 const showcase = new URLSearchParams(location.search).has('showcase');
+const navigation = { projects: [{id:'preview-project',nativeId:'preview-project',name:'示例项目',roots:['/example/workspace'],pinned:true},{id:'preview-other',nativeId:'preview-other',name:'插件开发',roots:['/example/plugins']}], sections:[] };
 const presence = showcase ? { 'example-a': { owned: true, resumeSafe: true } } : {};
 const history = [{ id: 'example-turn', status: 'completed', items: [
   { id: 'u', type: 'userMessage', content: [{ type: 'text', text: '请检查插件结构，并说明发布前要确认什么。' }] },
@@ -18,7 +19,7 @@ const rpc = async (method, payload, signal) => {
   switch (method) {
     case 'health': return { status: 'connected', detail: '已连接', codexVersion: 'preview', ownedThreads: Object.keys(presence) };
     case 'models': return { data: [{ id: 'example-model', displayName: 'Example model', reasoningEfforts: ['low', 'high'] }] };
-    case 'list': return { data: threads.filter(t => !payload.searchTerm || t.title.includes(payload.searchTerm)).map(t => ({ ...t, presence: presence[t.id] })) };
+    case 'list': return { navigation, data: threads.filter(t => !payload.searchTerm || t.title.includes(payload.searchTerm)).map(t => ({ ...t, presence: presence[t.id] })) };
     case 'read': return { ...threads.find(t => t.id === payload.threadId), turnCount: history.length, presence: presence[payload.threadId] };
     case 'turns': return { turns: history };
     case 'resume': presence[payload.threadId] = { owned: true, resumeSafe: true }; return { presence: presence[payload.threadId] };

@@ -39,6 +39,8 @@ export function Panel({ client }) {
   const generation = useRef(0);
 
   const [models, setModels] = useState([]);
+  const [navigation, setNavigation] = useState(null);
+  const [newProjectId, setNewProjectId] = useState('');
   const [presence, setPresence] = useState({});
   const [occupied, setOccupied] = useState({});
   const [runtimeMap, setRuntimeMap] = useState({});
@@ -141,6 +143,7 @@ export function Panel({ client }) {
           return [...map.values()];
         });
         setCursor(result.nextCursor ?? null);
+        if (result.navigation) setNavigation(result.navigation);
         setListError('');
         setKnownCwds((previous) => [...new Set([...previous, ...(result.data ?? []).map((thread) => thread.cwd).filter(Boolean)])].sort());
         setKnownSources((previous) => [...new Set([...previous, ...(result.data ?? []).map((thread) => thread.sourceKind).filter(Boolean)])].sort());
@@ -175,7 +178,7 @@ export function Panel({ client }) {
   const refreshList = useCallback(() => fetchPage(null, { reset: true }), [fetchPage]);
   const { resume, release, createThread, renameThread, archiveThread, deleteThread, sendMessage, steer, interrupt, queueAdd, queueList, reconcile, applySettings, decide, releaseRuntime } = useActions({ client, pushNotice, setBusy, setPresence, setOccupied, setThreadRuntime, refreshList, knownCwds, setSelectedId, runtimeMap, setRuntimeMap, setHealth, setLiveByThread, setApprovals });
 
-  const rows = useMemo(() => buildSessionRows(items, { source }), [items, source]);
+  const rows = useMemo(() => buildSessionRows(items, { source, navigation, selectedId, matchesOnly: Boolean(debouncedQuery || cwd || source || archived) }), [items, source, navigation, selectedId, debouncedQuery, cwd, archived]);
   const resetKey = `${debouncedQuery}|${cwd}|${source}|${archived ? 1 : 0}`;
   const filterActive = Boolean(debouncedQuery || cwd || source || archived);
 
@@ -191,7 +194,8 @@ export function Panel({ client }) {
     listBody = h(
       Center,
       { title: filterActive ? '没有匹配的会话' : connected ? '还没有 Codex 会话' : 'codex 未连接' },
-      filterActive ? '换个关键词或筛选条件试试。' : connected ? '在 Codex 里创建会话后会出现在这里。' : '连接成功后这里会列出会话。',
+      filterActive ? (cursor ? '当前已加载的聊天中没有匹配项，可继续加载历史。' : '换个关键词或筛选条件试试。') : connected ? '在 Codex 里创建会话后会出现在这里。' : '连接成功后这里会列出会话。',
+      cursor ? h('button', { className: 'cp-btn', disabled: loadingMore, onClick: loadMore }, loadingMore ? '正在加载…' : '继续加载历史聊天') : null,
     );
   else
     listBody = h(SessionRows, {
@@ -206,23 +210,29 @@ export function Panel({ client }) {
       resetKey,
     });
 
-  const openNew = () => { setNewCwd(items.find(item => item.id === selectedId)?.cwd || knownCwds[0] || ''); setShowNew(true); };
+  const openNew = () => {
+    const selected = items.find(item => item.id === selectedId);
+    const project = navigation?.projects.find(project => project.id === (selected?.projectId || navigation.selectedProjectId));
+    setNewProjectId(project?.nativeId ? project.id : '');
+    setNewCwd(project?.roots[0] || selected?.cwd || ''); setShowNew(true);
+  };
   const unreadApprovals = approvals.filter(request => request.threadId !== selectedId);
   return h('div', { className: 'cp-root' }, h('style', null, CSS),
     h('div', { className: 'cp-main' },
       sidebarOpen ? h('button', { className: 'cp-sidebar-backdrop', 'aria-label': '关闭聊天列表', onClick: () => setSidebarOpen(false) }) : null,
-      h('aside', { className: `cp-side${sidebarOpen ? ' open' : ' closed'}`, 'aria-label': '项目与聊天', inert: sidebarOpen ? undefined : true },
+      h('aside', { className: `cp-side${sidebarOpen ? ' open' : ' closed'}`, 'aria-label': '项目与聊天', inert: sidebarOpen ? undefined : '' },
         h('div', { className: 'cp-sidebar-top' }, h('strong', null, 'Codex'), h('span', { className: 'cp-spacer' }),
           h('button', { className: 'cp-icon-btn', 'aria-label': '搜索聊天', 'aria-expanded': searchOpen, onClick: () => setSearchOpen(value => !value) }, h(Icon, { name: 'search' })),
           h('button', { className: 'cp-icon-btn cp-sidebar-close', 'aria-label': '收起聊天列表', onClick: () => setSidebarOpen(false) }, h(Icon, { name: 'sidebar' }))),
         h('button', { className: 'cp-new-chat', disabled: !connected || busy, onClick: openNew }, h(Icon, { name: 'edit', size: 17 }), '新聊天'),
         searchOpen ? h('div', { className: 'cp-side-tools' }, h('input', { className: 'cp-search', type: 'search', placeholder: '搜索聊天标题', 'aria-label': '搜索聊天标题', value: query, autoFocus: true, onChange: event => setQuery(event.target.value) })) : null,
-        h('div', { className: 'cp-project-heading' }, h('span', null, archived ? '已归档' : '项目'), h('span', { className: 'cp-spacer' }),
+        h('div', { className: 'cp-project-heading' }, h('span', null, archived ? '已归档聊天' : '聊天导航'), h('span', { className: 'cp-spacer' }),
           h('details', { className: 'cp-menu' }, h('summary', { 'aria-label': '筛选聊天', className: filterActive ? 'active' : '' }, h(Icon, { name: 'filter', size: 15 })),
             h('div', { className: 'cp-popover cp-filter-popover' },
               h('label', null, '工作目录', h('select', { className: 'cp-select', value: cwd, onChange: event => setCwd(event.target.value), 'aria-label': '按目录筛选' }, h('option', { value: '' }, '全部目录'), knownCwds.map(value => h('option', { key: value, value }, basename(value))))),
               h('label', null, '来源', h('select', { className: 'cp-select', value: source, onChange: event => setSource(event.target.value), 'aria-label': '按来源筛选' }, h('option', { value: '' }, '全部来源'), knownSources.map(value => h('option', { key: value, value }, sourceLabel(value))))),
               h('label', null, '归档状态', h('select', { className: 'cp-select', value: archived ? '1' : '0', onChange: event => setArchived(event.target.value === '1'), 'aria-label': '归档状态' }, h('option', { value: '0' }, '未归档'), h('option', { value: '1' }, '已归档')))))),
+        navigation?.warnings?.length ? h('div', { className: 'cp-navigation-warning' }, navigation.warnings.join('；')) : null,
         listBody,
         unreadApprovals.length ? h('div', { className: 'cp-other-approvals' }, h('span', null, `${unreadApprovals.length} 项请求等待决定`), ...[...new Set(unreadApprovals.map(request => request.threadId))].map(id => h('button', { key: id, className: 'cp-link', onClick: () => { setSelectedId(id); if (window.innerWidth <= 760) setSidebarOpen(false); } }, items.find(item => item.id === id)?.title || '打开聊天'))) : null,
         h('div', { className: 'cp-sidebar-footer' }, h('details', { className: 'cp-menu cp-connection-menu' },
@@ -243,8 +253,10 @@ export function Panel({ client }) {
         onDecide: decide, onApplySettings: applySettings, archivedView: archived, onRename: renameThread,
         onArchive: id => archiveThread(id, false), onUnarchive: id => archiveThread(id, true), onDelete: deleteThread,
       })),
-    showNew ? h(Dialog, { title: '新聊天', onClose: closeNew }, h('form', { onSubmit: async event => { event.preventDefault(); if (await createThread(newCwd)) { closeNew(); if (window.innerWidth <= 760) setSidebarOpen(false); } } },
+    showNew ? h(Dialog, { title: '新聊天', onClose: closeNew }, h('form', { onSubmit: async event => { event.preventDefault(); if (await createThread(newCwd, newProjectId)) { closeNew(); if (window.innerWidth <= 760) setSidebarOpen(false); } } },
       h('p', { className: 'cp-dialog-hint' }, '选择本机工作目录。新聊天会保存到 Codex 的原始存储。'),
+      h('label', null, '项目', h('select', { className: 'cp-select', value: newProjectId, onChange: event => { setNewProjectId(event.target.value); const project = navigation?.projects.find(project => project.id === event.target.value); if (project?.roots[0]) setNewCwd(project.roots[0]); } },
+        h('option', { value: '' }, '不归属项目'), (navigation?.projects ?? []).filter(project => project.nativeId).map(project => h('option', { key: project.id, value: project.id }, project.name)))),
       h('label', null, '工作目录', h('input', { className: 'cp-search', placeholder: '/path/to/project', value: newCwd, required: true, pattern: '/.*', list: 'cp-known-projects', onChange: event => setNewCwd(event.target.value) })),
       h('datalist', { id: 'cp-known-projects' }, knownCwds.map(value => h('option', { key: value, value }))),
       h('div', { className: 'cp-dialog-actions' }, h('button', { type: 'button', className: 'cp-btn', onClick: closeNew }, '取消'), h('button', { className: 'cp-btn primary', disabled: busy || !newCwd.trim().startsWith('/') }, busy ? '创建中…' : '创建聊天')))) : null);

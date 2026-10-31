@@ -92,7 +92,7 @@ export function Conversation({ client, threadId, connected, occupied, runtime, l
 
   const header = h('header', { className: 'cp-chat-header' },
     h('button', { className: 'cp-icon-btn', onClick: onToggleSidebar, 'aria-label': '切换聊天列表', title: '切换聊天列表' }, h(Icon, { name: 'sidebar' })),
-    h(Icon, { name: 'folder', size: 16 }), h('div', { className: 'cp-chat-heading' }, h('h2', null, meta?.title || (threadId ? '正在打开聊天…' : 'Codex')), meta?.cwd ? h('span', { title: meta.cwd }, basename(meta.cwd)) : null),
+    h(Icon, { name: 'folder', size: 16 }), h('div', { className: 'cp-chat-heading' }, h('h2', null, meta?.title || (threadId ? '正在打开聊天…' : 'Codex')), meta?.cwd ? h('span', { title: meta.cwd }, meta.projectName || basename(meta.cwd)) : null),
     h('span', { className: 'cp-spacer' }),
     running ? h('span', { className: 'cp-subtle-state' }, h('span', { className: 'cp-spinner' }), '处理中') : null,
     threadId ? h('details', { className: 'cp-menu' }, h('summary', { 'aria-label': '会话操作', title: '会话操作' }, h(Icon, { name: 'more' })),
@@ -106,7 +106,7 @@ export function Conversation({ client, threadId, connected, occupied, runtime, l
 
   return h('section', { className: 'cp-preview' }, header,
     showDetails ? h('div', { className: 'cp-chat-details' },
-      h('span', null, `目录：${meta?.cwd ?? '—'}`), h('span', null, `来源：${sourceLabel(meta?.sourceKind)}`),
+      h('span', null, `目录：${meta?.cwd ?? '—'}`), h('span', null, `来源：${sourceLabel(meta?.sourceKind)}`), h('span', null, `项目：${meta?.projectName || '无明确归属'}`),
       h('span', null, `轮次：${meta?.turnCount ?? 0}${meta?.turnCountTruncated ? '+' : ''}`),
       h('span', { className: 'cp-thread-id' }, threadId), h('button', { className: 'cp-link', onClick: copyId }, copied ? '已复制' : '复制 ID'),
       h('span', null, owned ? '已接入本面板' : occupied ? '可能被其他客户端使用' : '历史预览')) : null,

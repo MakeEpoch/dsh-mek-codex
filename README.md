@@ -4,13 +4,18 @@ MakeEpoch 的 DSH Codex 集成插件。在 DSH 中浏览 Codex 会话、查看�
 
 会话通过本机 `codex app-server` 读取和操作，继续使用 Codex 自己的存储。浏览器代码由 DSH 加载并复用 DSH 的 React。
 
-![桌面开发预览（模拟数据）](docs/images/codex-desktop.png)
+0.2.0 的界面布局示意（模拟数据；0.2.1 的项目导航已按注册项目修正）：
+
+![早期桌面开发预览（模拟数据）](docs/images/codex-desktop.png)
 
 [详细交互分析](docs/interaction-design.md) · [代码审查与验证](docs/review-0.2.0.md)
 
+0.2.1 修复真实 DSH React 18 打开聊天崩溃，并改为读取真实项目归属，详见 [修复说明](docs/fix-0.2.1.md)。
+
 ## 功能
 
-- 项目聊天导航、项目折叠与逐步展开、标题搜索、来源与归档筛选、分页和虚拟滚动。
+- 原生注册项目、置顶和自定义分区导航；项目多根目录与历史明确聊天归属兼容。
+- 项目折叠与逐步展开、标题搜索、来源与归档筛选、分页和虚拟滚动；其他聊天独立收纳。
 - 默认只读预览；点击「进入会话」后才接入线程并显示输入框。
 - 居中对话阅读区、安全 Markdown、分组折叠的命令与思考、历史滚动与回到底部。
 - 底部协作输入框、图片选择和粘贴、插话、排队、中断及模型设置。
@@ -26,7 +31,7 @@ MakeEpoch 的 DSH Codex 集成插件。在 DSH 中浏览 Codex 会话、查看�
 从 [Releases](https://github.com/MakeEpoch/dsh-mek-codex/releases) 下载发行包，然后执行：
 
 ```sh
-dsh plugin --profile web add ./dsh-mek-codex-0.2.0.tgz
+dsh plugin --profile web add ./dsh-mek-codex-0.2.1.tgz
 ```
 
 也可在仓库内构建和打包，再安装生成的 `.tgz`：
@@ -45,7 +50,7 @@ npm pack
 
 ```sh
 dsh plugin --profile web remove dsh-codex-panel
-dsh plugin --profile web add ./dsh-mek-codex-0.2.0.tgz
+dsh plugin --profile web add ./dsh-mek-codex-0.2.1.tgz
 ```
 
 新版保留 `codex-panel` 配置行和面板 ID，继续使用 `$DSH_HOME/codex-panel/state.json`（未设 DSH_HOME 时为 `~/.dsh/codex-panel/state.json`），并兼容旧 RPC 路径。自定义的 `stateDir`、`codexBin` 配置应原样保留。
@@ -61,6 +66,7 @@ host/
   events.js        事件缓冲、长轮询与线程状态
   state.js         发送安全状态的原子文件替换
   handlers.js      会话、发送、核对、图片等业务 RPC
+  navigation.js    原生项目与桌面导航元数据的只读适配
 client/
   index.js         DSH 插槽注册
   panel.js         列表、筛选和主界面组合
@@ -70,6 +76,7 @@ client/
   rpc.js           浏览器 RPC 适配
   helpers.js       展示数据转换
   styles.js        面板样式
+client/jsx-runtime.js 统一使用 DSH 注入的 React 创建元素
 shared/identity.js 包名、版本与兼容标识
 lib/client.js      自动生成的 DSH 浏览器入口，不手工修改
 lib/index.js       兼容旧开发入口
@@ -89,6 +96,8 @@ Host 不依赖浏览器模块；Client 不访问文件系统或直接启动 Code
 
 业务方法包括 `health`、`restart`、`release.all`、`list`、`turns`、`read`、`start`、`rename`、`archive`、`unarchive`、`remove`、`resume`、`release`、`send`、`steer`、`interrupt`、`queue.add`、`queue.list`、`settings`、`models`、`events`、`presence`、`reconcile`、`approval.decide`、`upload.image`。契约实现见 `host/handlers.js`。
 
+项目与聊天导航使用本机 `CODEX_HOME`（默认 `~/.codex`）中的元数据；仅兼容读取 `.codex-global-state.json` 的导航字段，可用 `globalStateFile` 指定文件。不会写入此文件或按 cwd 推断归属。
+
 配置项：`codexBin` 指定可执行文件（其次读取 `CODEX_BIN`，默认 `codex`）；`stateDir` 指定状态文件与上传目录。状态目录含草稿文本和图片，应按私人会话数据管理。
 
 ## 开发与验证
@@ -102,7 +111,7 @@ npm run test:client
 npm run pack:check
 ```
 
-`npm test` 使用虚构数据和临时目录，不连接真实账户。`npm run check` 检查未定义引用和构建产物一致性。CI 在 Node 22、24 上执行同样的检查。
+`npm test` 使用虚构数据和临时目录，不连接真实账户。`npm run check` 检查未定义引用和构建产物一致性。CI 在 Node 22、24 上执行同样的检查，聊天 bundle 的渲染回归使用真实 DSH 对应的 React 18.3.1。
 
 ```sh
 npm run test:live

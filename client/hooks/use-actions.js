@@ -52,11 +52,11 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
     [client, pushNotice, refreshPresence],
   );
 
-  const createThread = useCallback(async (cwdValue) => {
+  const createThread = useCallback(async (cwdValue, projectId) => {
     if (!cwdValue?.trim()) return;
     setBusy(true);
     try {
-      const result = await client.start({ cwd: cwdValue.trim() });
+      const result = await client.start({ cwd: cwdValue.trim(), ...(projectId ? { projectId } : {}) });
       const threadId = result.thread?.id;
       pushNotice(`已创建会话 ${String(threadId ?? '').slice(0, 8)}…`);
       if (threadId) {

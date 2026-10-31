@@ -6,6 +6,7 @@ import { EventHub } from './events.js';
 import { StateStore } from './state.js';
 import { CodexRuntime } from './runtime.js';
 import { createApprovals } from './approvals.js';
+import { createNavigation } from './navigation.js';
 import { createHandlers } from './handlers.js';
 export const name = PLUGIN_NAME;
 export const inject = ['connection'];
@@ -32,7 +33,7 @@ export function apply(ctx, config = {}) {
   const approvals = createApprovals(runtime, hub);
   runtime.approvals = approvals;
 
-  const handlers = createHandlers(runtime, hub, store, approvals, stateDir);
+  const handlers = createHandlers(runtime, hub, store, approvals, stateDir, createNavigation(runtime, config));
 
   function registerRpc(endpoint) {
     return ctx.connection.fetch.register({

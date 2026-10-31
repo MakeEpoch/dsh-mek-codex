@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { badRequest, clampLimit, mapThread } from './helpers.js';
 import { MAX_PAGE, MAX_TURNS_PAGE, MAX_BODY_BYTES } from './constants.js';
 
-export function createHandlers(runtime, hub, store, approvals, stateDir) {
+export function createHandlers(runtime, hub, store, approvals, stateDir, navigation) {
   const sending = new Set();
   function presenceOf(threadId) {
     const state = hub.threadState(threadId);
@@ -26,16 +26,16 @@ export function createHandlers(runtime, hub, store, approvals, stateDir) {
     if (payload.searchTerm) params.searchTerm = String(payload.searchTerm);
     if (payload.cwd) params.cwd = String(payload.cwd);
     if (payload.archived === true || payload.archived === false) params.archived = payload.archived;
-    const result = await runtime.request('thread/list', params);
+    const [result, nav] = await Promise.all([runtime.request('thread/list', params), navigation?.snapshot()]);
     const raw = Array.isArray(result?.data) ? result.data : [];
     const seen = new Set();
     const data = [];
     for (const thread of raw) {
       if (!thread?.id || seen.has(thread.id)) continue;
       seen.add(thread.id);
-      data.push({ ...mapThread(thread), presence: presenceOf(thread.id) });
+      data.push({ ...mapThread(thread), ...(nav?.classify(thread) ?? {}), presence: presenceOf(thread.id) });
     }
-    return { data, nextCursor: result?.nextCursor ?? null, rawCount: raw.length };
+    return { data, nextCursor: result?.nextCursor ?? null, rawCount: raw.length, ...(nav ? { navigation: nav.value } : {}) };
   }
 
   async function listTurns(payload) {
@@ -64,7 +64,8 @@ export function createHandlers(runtime, hub, store, approvals, stateDir) {
     const threadId = String(payload.threadId);
     const result = await runtime.request('thread/read', { threadId, includeTurns: false });
     if (!result?.thread) throw badRequest('线程不存在');
-    const meta = mapThread(result.thread);
+    const nav = await navigation?.snapshot();
+    const meta = { ...mapThread(result.thread), ...(nav?.classify(result.thread) ?? {}) };
     let count = 0;
     let cursor = null;
     let pages = 0;
@@ -303,6 +304,12 @@ export function createHandlers(runtime, hub, store, approvals, stateDir) {
     const cwd = String(payload?.cwd ?? '').trim();
     if (!cwd || !isAbsolute(cwd)) throw badRequest('工作目录 cwd 必须是绝对路径');
     const params = { cwd, approvalsReviewer: 'user', ephemeral: false };
+    if (payload.projectId) {
+      const snapshot = await navigation?.snapshot();
+      const project = snapshot?.value.projects.find(project => project.id === payload.projectId && project.nativeId);
+      if (!project) throw badRequest('项目不存在或当前 Codex 版本不支持此项目', 'unknown-project');
+      params.projectId = project.nativeId;
+    }
     if (payload.model) params.model = String(payload.model);
     if (payload.approvalPolicy) params.approvalPolicy = payload.approvalPolicy;
     if (payload.sandbox) params.sandbox = payload.sandbox;
