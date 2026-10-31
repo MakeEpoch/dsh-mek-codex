@@ -1,0 +1,4 @@
+# Keep the existing row id so upgrades replace the installed plugin.
+- insert:
+    - id: codex-panel
+      name: dsh-mek-codex

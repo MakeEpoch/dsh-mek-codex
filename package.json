@@ -1,0 +1,70 @@
+{
+  "name": "dsh-mek-codex",
+  "version": "0.2.0",
+  "description": "MakeEpoch Codex integration for DSH: conversations, streaming and approvals",
+  "type": "module",
+  "main": "./host/index.js",
+  "exports": {
+    ".": "./host/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "host",
+    "shared",
+    "client",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "docs",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    },
+    "engines": {
+      "dsh": ">=0.2.1-rc.2 <0.3.0"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakeEpoch/dsh-mek-codex.git"
+  },
+  "homepage": "https://github.com/MakeEpoch/dsh-mek-codex#readme",
+  "bugs": {
+    "url": "https://github.com/MakeEpoch/dsh-mek-codex/issues"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:client": "node scripts/smoke-client.mjs",
+    "test:live": "node scripts/smoke-host.mjs",
+    "pack:check": "npm pack --dry-run",
+    "check": "eslint . && node scripts/build.mjs --check"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "eslint": "^9.39.4",
+    "jsdom": "^26.1.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  }
+}
