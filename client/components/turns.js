@@ -4,6 +4,7 @@ import { TURN_STATUS } from '../constants.js';
 import { Markdown } from './markdown.js';
 import { Icon } from './icon.js';
 import { lowerBound, mergeLiveItems, basename, formatTime } from '../helpers.js';
+import { reasoningView } from '../reasoning.js';
 
 function turnItemText(item) {
   switch (item?.type) {
@@ -18,7 +19,7 @@ function turnItemText(item) {
     case 'agentMessage':
       return item.text ?? '';
     case 'reasoning':
-      return Array.isArray(item.summary) ? item.summary.map(part => typeof part === 'string' ? part : part.text ?? '').join('\n') : item.summary ?? item.text ?? '';
+      return reasoningView(item)?.text ?? '';
     case 'commandExecution':
       return [item.command ?? '', item.aggregatedOutput ?? item.output ?? ''].filter(Boolean).join('\n');
     case 'fileChange':
@@ -65,14 +66,19 @@ function ExecutionGroup({ items }) {
 
 export function TurnBlock({ turn, live, plan }) {
   const items = Array.isArray(turn?.items) ? turn.items : [];
+  const activeReasoning = live && turn?.status === 'inProgress'
+    ? items.findLast(item => item.type === 'reasoning' && item.reasoningActive === true)
+    : null;
   const blocks = []; let tools = [];
   const flush = () => { if (tools.length) { blocks.push(h(ExecutionGroup, { key: `tools-${blocks.length}`, items: tools })); tools = []; } };
   for (const [index, item] of items.entries()) {
+    // Reasoning is transient UI; finished and historical entries leave no row.
+    if (item.type === 'reasoning' && (item !== activeReasoning || !reasoningView(item))) continue;
     if (!['userMessage', 'agentMessage', 'reasoning'].includes(item.type)) { tools.push(item); continue; }
     flush();
     const text = turnItemText(item);
     if (item.type === 'reasoning') {
-      blocks.push(h('details', { className: 'cp-reasoning', key: item.id ?? index }, h('summary', null, '思考摘要', h(Icon, { name: 'chevron', size: 12 })), h(Markdown, { text })));
+      blocks.push(h('details', { className: 'cp-reasoning', open: true, key: item.id ?? index }, h('summary', null, reasoningView(item).label, h(Icon, { name: 'chevron', size: 12 })), h(Markdown, { text })));
     } else {
       blocks.push(h('article', { key: item.id ?? index, className: `cp-message ${item.type === 'userMessage' ? 'cp-message-user' : 'cp-message-agent'}`, 'aria-label': item.type === 'userMessage' ? '用户消息' : 'Codex 回复' }, h(Markdown, { text })));
     }

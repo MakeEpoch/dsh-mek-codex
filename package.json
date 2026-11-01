@@ -1,6 +1,6 @@
 {
   "name": "dsh-mek-codex",
-  "version": "0.2.1",
+  "version": "0.2.6",
   "description": "MakeEpoch Codex integration for DSH: conversations, streaming and approvals",
   "type": "module",
   "main": "./host/index.js",
@@ -66,5 +66,8 @@
     "react-dom": "18.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
+  },
+  "dependencies": {
+    "ws": "8.22.1"
   }
 }

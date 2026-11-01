@@ -30,6 +30,14 @@ export function createClient(connection) {
     read(params, signal) {
       return this.call('read', params, signal);
     },
+    filePreview(params, signal) { return this.call('file.preview', params, signal); },
+    fileUrl(params) {
+      const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null));
+      return `/api/${ENDPOINT}/file?${query}`;
+    },
+    sync(params, signal) {
+      return this.call('sync', params, signal);
+    },
     models() {
       return this.call('models', {});
     },

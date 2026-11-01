@@ -2,10 +2,11 @@ import { useEvents } from './hooks/use-events.js';
 import { useActions } from './hooks/use-actions.js';
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 const h = React.createElement;
-import { REFRESH_MS, PAGE_SIZE, EVENT_TIMEOUT_MS } from './constants.js';
-import { statusLine, buildSessionRows, decisionLabel, basename, sourceLabel } from './helpers.js';
+import { REFRESH_MS } from './constants.js';
+import { useSessionList } from './hooks/use-session-list.js';
+import { statusLine, buildSessionRows, basename, sourceLabel } from './helpers.js';
 import { CSS } from './styles.js';
-import { StatusPill, Center, ErrorBox, SkeletonRows } from './components/common.js';
+import { Center, ErrorBox, SkeletonRows } from './components/common.js';
 import { SessionRows } from './components/sessions.js';
 import { Conversation } from './conversation.js';
 import { Icon } from './components/icon.js';
@@ -29,17 +30,7 @@ export function Panel({ client }) {
   const saveDraft = useCallback((id, draft) => setDrafts(previous => ({ ...previous, [id]: draft })), []);
   const closeNew = useCallback(() => setShowNew(false), []);
 
-  const [items, setItems] = useState([]);
-  const [cursor, setCursor] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [listError, setListError] = useState('');
-  const [knownCwds, setKnownCwds] = useState([]);
-  const [knownSources, setKnownSources] = useState([]);
-  const generation = useRef(0);
-
   const [models, setModels] = useState([]);
-  const [navigation, setNavigation] = useState(null);
   const [newProjectId, setNewProjectId] = useState('');
   const [presence, setPresence] = useState({});
   const [occupied, setOccupied] = useState({});
@@ -51,6 +42,7 @@ export function Panel({ client }) {
 
   const connected = health?.status === 'connected';
   const status = statusLine(health?.status, health?.detail);
+  const { items, cursor, navigation, loading, updating, stale, loadingMore, error: listError, knownCwds, knownSources, refreshList, loadMore } = useSessionList({ client, connected, query: debouncedQuery, cwd, archived, setPresence });
 
   const pushNotice = useCallback((text) => {
     setNotices((previous) => [...previous.slice(-4), text]);
@@ -110,72 +102,8 @@ export function Panel({ client }) {
     return () => clearTimeout(timer);
   }, [query]);
 
-  /* ---- list paging ---- */
-  const fetchPage = useCallback(
-    async (nextCursor, { reset }) => {
-      if (!connected) {
-        if (reset) {
-          setItems([]);
-          setCursor(null);
-          setLoading(false);
-        }
-        return;
-      }
-      const gen = ++generation.current;
-      if (reset) {
-        setLoading(true);
-        setListError('');
-      } else {
-        setLoadingMore(true);
-      }
-      try {
-        const result = await client.list({
-          cursor: nextCursor ?? undefined,
-          limit: PAGE_SIZE,
-          searchTerm: debouncedQuery || undefined,
-          cwd: cwd || undefined,
-          archived,
-        });
-        if (gen !== generation.current) return;
-        setItems((previous) => {
-          const map = new Map((reset ? [] : previous).map((thread) => [thread.id, thread]));
-          for (const thread of result.data ?? []) if (!map.has(thread.id)) map.set(thread.id, thread);
-          return [...map.values()];
-        });
-        setCursor(result.nextCursor ?? null);
-        if (result.navigation) setNavigation(result.navigation);
-        setListError('');
-        setKnownCwds((previous) => [...new Set([...previous, ...(result.data ?? []).map((thread) => thread.cwd).filter(Boolean)])].sort());
-        setKnownSources((previous) => [...new Set([...previous, ...(result.data ?? []).map((thread) => thread.sourceKind).filter(Boolean)])].sort());
-        setPresence((previous) => {
-          const next = { ...previous };
-          for (const thread of result.data ?? []) if (thread.presence) next[thread.id] = thread.presence;
-          return next;
-        });
-      } catch (cause) {
-        if (gen === generation.current) setListError(cause?.message || String(cause));
-      } finally {
-        if (gen === generation.current) {
-          setLoading(false);
-          setLoadingMore(false);
-        }
-      }
-    },
-    [client, connected, debouncedQuery, cwd, archived],
-  );
-
-  useEffect(() => {
-    void fetchPage(null, { reset: true });
-  }, [fetchPage]);
-
-  const loadMore = useCallback(() => {
-    if (!cursor || loadingMore) return;
-    void fetchPage(cursor, { reset: false });
-  }, [cursor, loadingMore, fetchPage]);
-
   useEvents({ client, connected, pushNotice, setLiveByThread, setPresence, setRuntimeMap, setApprovals });
 
-  const refreshList = useCallback(() => fetchPage(null, { reset: true }), [fetchPage]);
   const { resume, release, createThread, renameThread, archiveThread, deleteThread, sendMessage, steer, interrupt, queueAdd, queueList, reconcile, applySettings, decide, releaseRuntime } = useActions({ client, pushNotice, setBusy, setPresence, setOccupied, setThreadRuntime, refreshList, knownCwds, setSelectedId, runtimeMap, setRuntimeMap, setHealth, setLiveByThread, setApprovals });
 
   const rows = useMemo(() => buildSessionRows(items, { source, navigation, selectedId, matchesOnly: Boolean(debouncedQuery || cwd || source || archived) }), [items, source, navigation, selectedId, debouncedQuery, cwd, archived]);
@@ -188,8 +116,8 @@ export function Panel({ client }) {
   );
 
   let listBody;
-  if (loading) listBody = h(SkeletonRows, { count: 9 });
-  else if (listError) listBody = h(ErrorBox, { message: `加载失败：${listError}`, onRetry: () => void fetchPage(null, { reset: true }) });
+  if (loading && !rows.length) listBody = h(SkeletonRows, { count: 9 });
+  else if (listError && !rows.length) listBody = h(ErrorBox, { message: `加载失败：${listError}`, onRetry: refreshList });
   else if (!rows.length)
     listBody = h(
       Center,
@@ -204,7 +132,7 @@ export function Panel({ client }) {
       presenceOf: (threadId) => presence[threadId] ?? null,
       occupiedOf: (threadId) => Boolean(occupied[threadId]),
       onSelect: id => { setSelectedId(id); if (window.innerWidth <= 760) setSidebarOpen(false); },
-      hasMore: Boolean(cursor),
+      hasMore: Boolean(cursor) && !updating && connected,
       loadingMore,
       onLoadMore: loadMore,
       resetKey,
@@ -222,8 +150,7 @@ export function Panel({ client }) {
       sidebarOpen ? h('button', { className: 'cp-sidebar-backdrop', 'aria-label': '关闭聊天列表', onClick: () => setSidebarOpen(false) }) : null,
       h('aside', { className: `cp-side${sidebarOpen ? ' open' : ' closed'}`, 'aria-label': '项目与聊天', inert: sidebarOpen ? undefined : '' },
         h('div', { className: 'cp-sidebar-top' }, h('strong', null, 'Codex'), h('span', { className: 'cp-spacer' }),
-          h('button', { className: 'cp-icon-btn', 'aria-label': '搜索聊天', 'aria-expanded': searchOpen, onClick: () => setSearchOpen(value => !value) }, h(Icon, { name: 'search' })),
-          h('button', { className: 'cp-icon-btn cp-sidebar-close', 'aria-label': '收起聊天列表', onClick: () => setSidebarOpen(false) }, h(Icon, { name: 'sidebar' }))),
+          h('button', { className: 'cp-icon-btn', 'aria-label': '搜索聊天', 'aria-expanded': searchOpen, onClick: () => setSearchOpen(value => !value) }, h(Icon, { name: 'search' }))),
         h('button', { className: 'cp-new-chat', disabled: !connected || busy, onClick: openNew }, h(Icon, { name: 'edit', size: 17 }), '新聊天'),
         searchOpen ? h('div', { className: 'cp-side-tools' }, h('input', { className: 'cp-search', type: 'search', placeholder: '搜索聊天标题', 'aria-label': '搜索聊天标题', value: query, autoFocus: true, onChange: event => setQuery(event.target.value) })) : null,
         h('div', { className: 'cp-project-heading' }, h('span', null, archived ? '已归档聊天' : '聊天导航'), h('span', { className: 'cp-spacer' }),
@@ -233,6 +160,8 @@ export function Panel({ client }) {
               h('label', null, '来源', h('select', { className: 'cp-select', value: source, onChange: event => setSource(event.target.value), 'aria-label': '按来源筛选' }, h('option', { value: '' }, '全部来源'), knownSources.map(value => h('option', { key: value, value }, sourceLabel(value))))),
               h('label', null, '归档状态', h('select', { className: 'cp-select', value: archived ? '1' : '0', onChange: event => setArchived(event.target.value === '1'), 'aria-label': '归档状态' }, h('option', { value: '0' }, '未归档'), h('option', { value: '1' }, '已归档')))))),
         navigation?.warnings?.length ? h('div', { className: 'cp-navigation-warning' }, navigation.warnings.join('；')) : null,
+        listError && rows.length ? h('div', { className: 'cp-list-status', role: 'status' }, '更新失败，保留当前列表', h('button', { className: 'cp-link', onClick: refreshList, title: listError }, '重试'))
+          : updating || stale ? h('div', { className: 'cp-list-status', role: 'status' }, updating ? (stale ? '已显示上次列表，正在更新…' : '正在更新列表…') : '已显示上次列表，等待连接更新') : null,
         listBody,
         unreadApprovals.length ? h('div', { className: 'cp-other-approvals' }, h('span', null, `${unreadApprovals.length} 项请求等待决定`), ...[...new Set(unreadApprovals.map(request => request.threadId))].map(id => h('button', { key: id, className: 'cp-link', onClick: () => { setSelectedId(id); if (window.innerWidth <= 760) setSidebarOpen(false); } }, items.find(item => item.id === id)?.title || '打开聊天'))) : null,
         h('div', { className: 'cp-sidebar-footer' }, h('details', { className: 'cp-menu cp-connection-menu' },

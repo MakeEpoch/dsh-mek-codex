@@ -1,15 +1,13 @@
 import { createInterface } from 'node:readline';
 
-export class LineTransport {
-  constructor(child) {
-    this.child = child;
+export class RpcPeer {
+  constructor(write) {
+    this.write = write;
     this.nextId = 1;
     this.pending = new Map();
     this.notificationHandlers = new Set();
     this.requestHandlers = new Set();
     this.closed = false;
-    this.rl = createInterface({ input: child.stdout });
-    this.rl.on('line', (line) => this.onLine(line));
   }
 
   onLine(line) {
@@ -55,8 +53,8 @@ export class LineTransport {
   }
 
   send(message) {
-    if (this.closed || !this.child?.stdin?.writable) throw new Error('app-server 连接已关闭');
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (this.closed) throw new Error('app-server 连接已关闭');
+    this.write(message);
   }
 
   request(method, params, timeoutMs = 30_000) {
@@ -102,11 +100,26 @@ export class LineTransport {
   close() {
     if (this.closed) return;
     this.closed = true;
-    this.rl.close();
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(new Error('app-server 连接已关闭'));
     }
     this.pending.clear();
+  }
+}
+
+export class LineTransport extends RpcPeer {
+  constructor(child) {
+    super(message => {
+      if (!child.stdin?.writable) throw new Error('app-server 连接已关闭');
+      child.stdin.write(`${JSON.stringify(message)}\n`);
+    });
+    this.child = child;
+    this.rl = createInterface({ input: child.stdout });
+    this.rl.on('line', line => this.onLine(line));
+  }
+  close() {
+    this.rl.close();
+    super.close();
   }
 }

@@ -1,4 +1,5 @@
 import { STATUS, SOURCE_LABELS, APPROVAL_METHODS, DECISION_LABELS } from './constants.js';
+import { reasoningText } from './reasoning.js';
 
 export function dedupeById(items) {
   const map = new Map();
@@ -129,7 +130,8 @@ export function presenceLabel(presence, occupied) {
 export function mergeLiveItems(live) {
   if (!live) return [];
   const map = new Map();
-  for (const item of live.items ?? []) if (item?.id) map.set(item.id, item);
+  for (const item of live.items ?? []) if (item?.id) map.set(item.id,
+    item.type === 'reasoning' ? { ...item, reasoningActive: live.activeReasoningId === item.id } : item);
   for (const [itemId, text] of Object.entries(live.deltas ?? {})) {
     const existing = map.get(itemId);
     // A completed item is authoritative: only fill items that have no text yet.
@@ -139,13 +141,14 @@ export function mergeLiveItems(live) {
       map.set(itemId, { id: itemId, type: 'agentMessage', text });
     }
   }
-  for (const [itemId, text] of Object.entries(live.reasoning ?? {})) {
-    const existing = map.get(itemId);
-    if (existing) {
-      if (!existing.summary) map.set(itemId, { ...existing, summary: text });
-    } else {
-      map.set(itemId, { id: itemId, type: 'reasoning', summary: text });
+  for (const [itemId, buffer] of Object.entries(live.reasoning ?? {})) {
+    const existing = map.get(itemId) ?? { id: itemId, type: 'reasoning' };
+    const streamed = typeof buffer === 'string' ? { summary: buffer } : buffer;
+    const merged = { ...existing, reasoningActive: live.activeReasoningId === itemId };
+    for (const field of ['summary', 'content']) {
+      if (!reasoningText(existing[field]).trim()) merged[field] = streamed[field] ?? existing[field];
     }
+    map.set(itemId, merged);
   }
   for (const [itemId, text] of Object.entries(live.outputs ?? {})) {
     const existing = map.get(itemId);

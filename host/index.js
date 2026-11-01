@@ -8,6 +8,9 @@ import { CodexRuntime } from './runtime.js';
 import { createApprovals } from './approvals.js';
 import { createNavigation } from './navigation.js';
 import { createHandlers } from './handlers.js';
+import { ReadOnlyObserver } from './observer.js';
+import { createThreadSync } from './sync.js';
+import { createFiles } from './files.js';
 export const name = PLUGIN_NAME;
 export const inject = ['connection'];
 
@@ -34,6 +37,10 @@ export function apply(ctx, config = {}) {
   runtime.approvals = approvals;
 
   const handlers = createHandlers(runtime, hub, store, approvals, stateDir, createNavigation(runtime, config));
+  const observer = new ReadOnlyObserver(config);
+  handlers.sync = createThreadSync(runtime, hub, observer);
+  const files = createFiles(runtime, stateDir, config);
+  handlers['file.preview'] = files.preview;
 
   function registerRpc(endpoint) {
     return ctx.connection.fetch.register({
@@ -76,12 +83,14 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     void runtime.start();
     const disposeRpcs = [ENDPOINT, LEGACY_ENDPOINT].map(registerRpc);
+    disposeRpcs.push(ctx.connection.fetch.register({ path: `/api/${ENDPOINT}/file`, methods: ['GET', 'HEAD'], fetch: files.fetch }));
     return async () => {
       try {
         for (const dispose of disposeRpcs) await dispose?.();
       } catch {
         /* route already gone */
       }
+      observer.close();
       await runtime.stop();
     };
   }, 'codex-panel: host');

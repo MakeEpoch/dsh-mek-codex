@@ -1,18 +1,19 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+const workspace = window.PREVIEW_WORKSPACE || '/example/workspace';
 const threads = [
-  { projectId: 'preview-project', id: 'example-a', title: '审查工作区与发布准备', cwd: '/example/workspace', sourceKind: 'cli', updatedAt: Date.now() / 1000 },
+  { projectId: 'preview-project', id: 'example-a', title: '审查工作区与发布准备', cwd: workspace, sourceKind: 'cli', updatedAt: Date.now() / 1000 },
   { projectId: 'preview-other', id: 'example-b', title: '检查插件兼容性', cwd: '/example/plugins', sourceKind: 'appServer', updatedAt: Date.now() / 1000 - 600 },
 ];
 const showcase = new URLSearchParams(location.search).has('showcase');
-const navigation = { projects: [{id:'preview-project',nativeId:'preview-project',name:'示例项目',roots:['/example/workspace'],pinned:true},{id:'preview-other',nativeId:'preview-other',name:'插件开发',roots:['/example/plugins']}], sections:[] };
+const navigation = { projects: [{id:'preview-project',nativeId:'preview-project',name:'示例项目',roots:[workspace],pinned:true},{id:'preview-other',nativeId:'preview-other',name:'插件开发',roots:['/example/plugins']}], sections:[] };
 const presence = showcase ? { 'example-a': { owned: true, resumeSafe: true } } : {};
 const history = [{ id: 'example-turn', status: 'completed', items: [
   { id: 'u', type: 'userMessage', content: [{ type: 'text', text: '请检查插件结构，并说明发布前要确认什么。' }] },
   { id: 'comment', type: 'agentMessage', text: '我会先检查模块职责和接口边界，再核对构建与发布内容。' },
   { id: 'c', type: 'commandExecution', command: 'npm run check', aggregatedOutput: 'Client bundle matches source', status: 'completed' },
   { id: 'c2', type: 'commandExecution', command: 'npm test', aggregatedOutput: 'All example checks passed', status: 'completed' },
-  { id: 'a', type: 'agentMessage', text: '**检查完成。** 当前示例的模块职责与发布路径已经整理清楚。\n\n- 运行时、审批和状态管理各自独立。\n- 对话默认展示正文，执行细节可以按需展开。\n- 发行包需要核对依赖、版本及兼容接口。\n\n下一步会先确认验证结果，再生成可安装的发行包。' },
+  { id: 'a', type: 'agentMessage', text: '**检查完成。** 当前示例的模块职责与发布路径已经整理清楚。\n\n- 运行时、审批和状态管理各自独立。\n- 对话默认展示正文，执行细节可以按需展开。\n- 发行包需要核对依赖、版本及兼容接口。\n\n下一步会先确认验证结果，再生成可安装的发行包。\n\n[代码（第12行）](app.js#L12-L14) · [项目说明](README.md) · [图片](image.png) · [PDF](report.pdf) · [下载附件](data.bin)' },
 ] }];
 let pendingApprovals = [];
 const rpc = async (method, payload, signal) => {
@@ -26,7 +27,9 @@ const rpc = async (method, payload, signal) => {
     case 'release': delete presence[payload.threadId]; return { note: '已释放预览会话' };
     case 'presence': return { presence };
     case 'settings': return {};
-    case 'send': pendingApprovals = [{ requestId: 'preview-approval', threadId: payload.threadId, method: 'item/commandExecution/requestApproval', command: 'npm run check', cwd: '/example/workspace', reason: '确认后执行检查', available: ['accept', 'decline', 'cancel'] }]; return { turnId: 'preview-send' };
+    case 'sync': return { unchanged: true, revision: 'preview', observation: { source: 'history', verified: false, state: 'unknown', activeFlags: [] } };
+    case 'file.preview': { const response = await fetch('/mock-file-preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload), signal }); const result = await response.json(); if (!response.ok) throw new Error(result.error); return result; }
+    case 'send': pendingApprovals = [{ requestId: 'preview-approval', threadId: payload.threadId, method: 'item/commandExecution/requestApproval', command: 'npm run check', cwd: workspace, reason: '确认后执行检查', available: ['accept', 'decline', 'cancel'] }]; return { turnId: 'preview-send' };
     case 'approval.decide': pendingApprovals = []; return {};
     case 'queue.add': return {};
     case 'queue.list': return { data: [] };

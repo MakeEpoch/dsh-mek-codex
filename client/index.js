@@ -16,6 +16,9 @@ const Icon = ({ size = 20 }) =>
 
 export function apply(ctx) {
   const client = createClient(ctx.connection);
+  client.speech = () => ctx.get?.('remote.speech');
+  const pluginNavigation = ctx.get?.('pluginNavigation');
+  if (pluginNavigation) client.openVoiceSettings = () => pluginNavigation.openBundle('@deepseek-ai/dsh-experimental-voice-input-bundle');
   const Main = () => h(Panel, { client });
   ctx.effect(() => {
     const disposers = [];

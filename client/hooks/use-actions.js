@@ -64,7 +64,7 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
         setPresence((previous) => ({ ...previous, [threadId]: result.presence }));
         setThreadRuntime(threadId, { settings: result.settings ?? null });
       }
-      void refreshList();
+      void refreshList({ force: true });
       return threadId;
     } catch (cause) {
       pushNotice(`新建失败：${cause?.message || cause}`);
@@ -80,7 +80,7 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
       try {
         await client.rename({ threadId, name: nameValue.trim() });
         pushNotice('已重命名');
-        void refreshList();
+        void refreshList({ force: true });
       } catch (cause) {
         pushNotice(`重命名失败：${cause?.message || cause}`);
       }
@@ -94,7 +94,7 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
         await (unarchive ? client.unarchive({ threadId }) : client.archive({ threadId }));
         pushNotice(unarchive ? '已取消归档' : '已归档');
         if (!unarchive) setSelectedId(null);
-        void refreshList();
+        void refreshList({ force: true });
       } catch (cause) {
         pushNotice(`${unarchive ? '取消归档' : '归档'}失败：${cause?.message || cause}`);
       }
@@ -113,7 +113,7 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
         await client.remove({ threadId });
         pushNotice('已删除会话');
         setSelectedId(null);
-        void refreshList();
+        void refreshList({ force: true });
       } catch (cause) {
         pushNotice(`删除失败：${cause?.message || cause}`);
       }
@@ -130,18 +130,20 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
       setThreadRuntime(threadId, { pendingDraft: { text: value, images: files.map((file) => file.path) }, unsafe: null });
       try {
         await client.send({ threadId, text: value, images: files.map((file) => file.path) });
+        setThreadRuntime(threadId, { pendingDraft: null, unsafe: null });
         return true;
       } catch (cause) {
         if (cause?.code === 'active-writer') {
           setOccupied((previous) => ({ ...previous, [threadId]: true }));
         }
         setThreadRuntime(threadId, { unsafe: { message: cause?.message || String(cause), code: cause?.code } });
+        pushNotice(`发送未完成：${cause?.message || cause}`);
         return false;
       } finally {
         setBusy(false);
       }
     },
-    [client, setThreadRuntime],
+    [client, pushNotice, setThreadRuntime],
   );
 
   const steer = useCallback(
@@ -220,8 +222,13 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
       if (value?.resumeSafe === true) {
         setThreadRuntime(threadId, { unsafe: null });
         pushNotice('核对完成：没有未确认的发送');
+      } else if (value?.sendStatus === 'confirmed') {
+        setThreadRuntime(threadId, { unsafe: null });
+        pushNotice('消息已确认发送，上一轮尚未核实结束');
+      } else if (value?.sendStatus === 'sending') {
+        pushNotice('正在等待发送确认，请稍后核对');
       } else {
-        pushNotice('仍未确认：该线程的上一轮没有终态记录，先不要重发');
+        pushNotice('仍未确认发送结果，已保留草稿，先不要重发');
       }
     },
     [client, pushNotice, setThreadRuntime],
@@ -231,9 +238,11 @@ export function useActions({ client, pushNotice, setBusy, setPresence, setOccupi
     async (threadId, params) => {
       setBusy(true);
       try {
-        await client.settings({ threadId, ...params });
-        setThreadRuntime(threadId, { settings: { ...(runtimeMap[threadId]?.settings ?? {}), model: params.model ?? null, effort: params.effort ?? null } });
-        pushNotice(`已更新模型设置`);
+        const result = await client.settings({ threadId, ...params });
+        if (result?.presence) setPresence(previous => ({ ...previous, [threadId]: result.presence }));
+        const patch = Object.fromEntries(Object.entries(params).filter(([, value]) => value !== undefined));
+        setThreadRuntime(threadId, { settings: { ...(runtimeMap[threadId]?.settings ?? {}), ...patch, ...result?.settings } });
+        pushNotice(params.approvalsReviewer ? '已更新审批方式，从下一轮生效' : '已更新模型与推理设置');
         return true;
       } catch (cause) {
         pushNotice(`设置失败：${cause?.message || cause}`);

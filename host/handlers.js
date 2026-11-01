@@ -4,6 +4,15 @@ import { randomUUID } from 'node:crypto';
 import { badRequest, clampLimit, mapThread } from './helpers.js';
 import { MAX_PAGE, MAX_TURNS_PAGE, MAX_BODY_BYTES } from './constants.js';
 
+function threadSettings(result, defaults = {}) {
+  const settings = { ...defaults, ...result?.settings };
+  for (const key of ['model', 'approvalsReviewer', 'approvalPolicy']) {
+    if (result?.[key] !== undefined) settings[key] = result[key];
+  }
+  if (result?.reasoningEffort !== undefined) settings.effort = result.reasoningEffort;
+  return settings;
+}
+
 export function createHandlers(runtime, hub, store, approvals, stateDir, navigation) {
   const sending = new Set();
   function presenceOf(threadId) {
@@ -15,6 +24,11 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
       running: owned && Boolean(state.running),
       threadStatus: state.threadStatus ?? null,
       resumeSafe: record.resumeSafe !== false,
+      // resumeSafe guards the next turn; an acknowledged send can still be running.
+      sendStatus: record.resumeSafe !== false ? 'idle' : record.lastTurnId ? 'confirmed' : sending.has(threadId) ? 'sending' : 'unknown',
+      approvalsReviewer: runtime.owns.get(threadId)?.approvalsReviewer ?? record.approvalsReviewer ?? 'user',
+      model: runtime.owns.get(threadId)?.model ?? null,
+      effort: runtime.owns.get(threadId)?.effort ?? null,
       lastTurnId: record.lastTurnId ?? null,
       lastStatus: record.lastStatus ?? null,
     };
@@ -111,25 +125,34 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
     if (payload.model) params.model = String(payload.model);
     if (payload.effort) params.effort = String(payload.effort);
     if (payload.summary) params.summary = String(payload.summary);
+    if (payload.approvalsReviewer !== undefined) {
+      if (!['user', 'auto_review'].includes(payload.approvalsReviewer)) throw badRequest('无效的审批方式');
+      if (approvals.snapshot().some(request => request.threadId === params.threadId)) throw badRequest('请先处理当前待审批请求，再切换审批方式', 'approval-pending');
+      params.approvalsReviewer = payload.approvalsReviewer;
+    }
     await runtime.request('thread/settings/update', params, 60_000);
-    return { ok: true, threadId: params.threadId, model: params.model ?? null, effort: params.effort ?? null };
+    const { threadId, ...settings } = params;
+    if (params.approvalsReviewer) store.set(threadId, { approvalsReviewer: params.approvalsReviewer });
+    runtime.owns.set(threadId, { ...runtime.owns.get(threadId), ...settings });
+    hub.push('presence/changed', { threadId, presence: presenceOf(threadId) });
+    return { ok: true, threadId, ...settings, settings, presence: presenceOf(threadId) };
   }
 
   async function resumeThread(payload) {
     if (!payload.threadId) throw badRequest('缺少 threadId');
     const threadId = String(payload.threadId);
-    const params = { threadId, approvalsReviewer: 'user' };
+    const params = { threadId, approvalsReviewer: store.get(threadId).approvalsReviewer ?? 'user' };
     if (payload.approvalPolicy) params.approvalPolicy = payload.approvalPolicy;
     if (payload.sandbox) params.sandbox = payload.sandbox;
     if (payload.model) params.model = payload.model;
     try {
       const result = await runtime.request('thread/resume', params, 60_000);
       if (result?.thread?.id !== threadId) throw badRequest('thread/resume 返回了不同的线程', 'resume-mismatch');
-      const settings = result.settings ?? null;
-      runtime.owns.set(threadId, { resumedAt: Date.now(), model: settings?.model ?? null, effort: settings?.effort ?? null });
-      store.set(threadId, { resumeSafe: store.get(threadId).resumeSafe !== false, owner: 'panel', reopenedAt: Date.now() });
+      const settings = threadSettings(result, { approvalsReviewer: params.approvalsReviewer });
+      runtime.owns.set(threadId, { resumedAt: Date.now(), ...settings });
+      store.set(threadId, { resumeSafe: store.get(threadId).resumeSafe !== false, owner: 'panel', reopenedAt: Date.now(), approvalsReviewer: settings.approvalsReviewer });
       hub.push('presence/changed', { threadId, presence: presenceOf(threadId) });
-      return { thread: mapThread(result.thread), settings, presence: presenceOf(threadId), approvalsReviewer: 'user' };
+      return { thread: mapThread(result.thread), settings, presence: presenceOf(threadId), approvalsReviewer: settings.approvalsReviewer };
     } catch (error) {
       const message = String(error?.message ?? error);
       if (/active writer/i.test(message)) {
@@ -165,7 +188,7 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
       if (!text.trim() && !(Array.isArray(payload.images) && payload.images.length)) throw badRequest('消息内容为空');
       const record = store.get(threadId);
       if (record.resumeSafe === false) {
-        throw badRequest('上一次发送结果未确认（unsafe）：请先「刷新核对」，本面板不会自动重发', 'unsafe');
+        throw badRequest(record.lastTurnId ? '上一轮已发送，尚未核实结束；请使用补充、排队或「刷新核对」' : '上一次发送结果未确认（unsafe）：请先「刷新核对」，本面板不会自动重发', 'unsafe');
       }
       if (!runtime.isOwned(threadId)) throw badRequest('请先进入会话', 'not-owned');
       const input = [];
@@ -177,6 +200,7 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
       try {
         const result = await runtime.request('turn/start', { threadId, input }, 60_000);
         const turnId = result?.turn?.id ?? null;
+        if (!turnId) throw new Error('turn/start 未返回轮次 ID');
         const completed = Boolean(turnId && store.get(threadId).completionTurnId === turnId);
         store.set(threadId, { lastTurnId: turnId, resumeSafe: completed });
         hub.push('presence/changed', { threadId, presence: presenceOf(threadId) });
@@ -184,7 +208,11 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
       } catch (error) {
         throw badRequest(`发送结果不确定：${error?.message ?? error}。已保留草稿，不会自动重发；请刷新核对。`, 'unsafe-send');
       }
-    } finally { sending.delete(threadId); }
+    } finally {
+      sending.delete(threadId);
+      // A rejected request must stop looking pending to event consumers as well.
+      hub.push('presence/changed', { threadId, presence: presenceOf(threadId) });
+    }
   }
 
   async function reconcile(payload) {
@@ -316,10 +344,11 @@ export function createHandlers(runtime, hub, store, approvals, stateDir, navigat
     const result = await runtime.request('thread/start', params, 60_000);
     const threadId = result?.thread?.id;
     if (!threadId) throw badRequest('thread/start 未返回线程');
-    runtime.owns.set(threadId, { resumedAt: Date.now(), model: result?.settings?.model ?? null, effort: result?.settings?.effort ?? null });
-    store.set(threadId, { resumeSafe: true, owner: 'panel', createdByPanel: true });
+    const settings = threadSettings(result, { approvalsReviewer: 'user' });
+    runtime.owns.set(threadId, { resumedAt: Date.now(), ...settings });
+    store.set(threadId, { resumeSafe: true, owner: 'panel', createdByPanel: true, approvalsReviewer: settings.approvalsReviewer });
     hub.push('presence/changed', { threadId, presence: presenceOf(threadId) });
-    return { thread: mapThread(result.thread), settings: result.settings ?? null, presence: presenceOf(threadId) };
+    return { thread: mapThread(result.thread), settings, presence: presenceOf(threadId) };
   }
 
   async function renameThread(payload) {

@@ -23,6 +23,7 @@ export const SOURCE_LABELS = {
 };
 
 export const TURN_STATUS = {
+  unknown: '实时状态未核实',
   completed: '完成',
   interrupted: '已中断',
   failed: '失败',
